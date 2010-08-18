@@ -109,6 +109,7 @@ class RepositoriesController < ApplicationController
     respond_to do |format|
       format.html { render :layout => false if request.xhr? }
       format.atom { render_feed(@changesets, :title => "#{@project.name}: #{l(:label_revision_plural)}") }
+      format.pdf { render_pdf "#@project-#@rev", :layout => 'pdf', :disposition => 'inline' }
     end
   end
   
