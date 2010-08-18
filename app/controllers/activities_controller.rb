@@ -25,8 +25,8 @@ class ActivitiesController < ApplicationController
     
     if events.empty? || stale?(:etag => [events.first, User.current])
       respond_to do |format|
-        format.html { 
-          @events_by_day = events.group_by(&:event_date)
+        @events_by_day = events.group_by(&:event_date)
+        format.html {
           render :layout => false if request.xhr?
         }
         format.atom {
@@ -37,6 +37,9 @@ class ActivitiesController < ApplicationController
             title = l("label_#{@activity.scope.first.singularize}_plural")
           end
           render_feed(events, :title => "#{@project || Setting.app_title}: #{title}")
+        }
+        format.pdf {
+          render_pdf "#@project-activity-#{@date_to.to_s(:db)}", :layout => 'pdf', :disposition => 'inline'
         }
       end
     end
