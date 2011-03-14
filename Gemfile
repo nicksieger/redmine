@@ -1,10 +1,10 @@
 source 'http://rubygems.org'
 
-gem 'rails', '2.3.5'
+gem 'rails', '2.3.11'
+gem 'i18n', '0.4.2'
 
 gem 'rubytree', '0.5.2', :require => 'tree'
-
-gem 'saucerly', :git => 'http://github.com/nicksieger/saucerly.git'
+gem 'coderay', '~>0.9.7'
 
 if defined?(JRUBY_VERSION)
   gem 'jruby-openssl'
