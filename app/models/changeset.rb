@@ -23,10 +23,10 @@ class Changeset < ActiveRecord::Base
   has_many :changes, :dependent => :delete_all
   has_and_belongs_to_many :issues
 
-  acts_as_event :title => Proc.new {|o| "#{l(:label_revision)} #{o.revision}" + (o.short_comments.blank? ? '' : (': ' + o.short_comments))},
+  acts_as_event :title => Proc.new {|o| "#{l(:label_revision)} #{o.format_identifier}" + (o.short_comments.blank? ? '' : (': ' + o.short_comments))},
                 :description => :long_comments,
                 :datetime => :committed_on,
-                :url => Proc.new {|o| {:controller => 'repositories', :action => 'revision', :id => o.repository.project, :rev => o.revision}}
+                :url => Proc.new {|o| {:controller => 'repositories', :action => 'revision', :id => o.repository.project, :rev => o.identifier}}
                 
   acts_as_searchable :columns => 'comments',
                      :include => {:repository => :project},
@@ -47,20 +47,30 @@ class Changeset < ActiveRecord::Base
   def revision=(r)
     write_attribute :revision, (r.nil? ? nil : r.to_s)
   end
-  
-  def comments=(comment)
-    write_attribute(:comments, Changeset.normalize_comments(comment))
+
+  # Returns the identifier of this changeset; depending on repository backends
+  def identifier
+    if repository.class.respond_to? :changeset_identifier
+      repository.class.changeset_identifier self
+    else
+      revision.to_s
+    end
   end
 
   def committed_on=(date)
     self.commit_date = date
     super
   end
-  
-  def committer=(arg)
-    write_attribute(:committer, self.class.to_utf8(arg.to_s))
-  end
 
+  # Returns the readable identifier
+  def format_identifier
+    if repository.class.respond_to? :format_changeset_identifier
+      repository.class.format_changeset_identifier self
+    else
+      identifier
+    end
+  end
+  
   def project
     repository.project
   end
@@ -70,59 +80,51 @@ class Changeset < ActiveRecord::Base
   end
   
   def before_create
-    self.user = repository.find_committer_user(committer)
+    self.committer = self.class.to_utf8(self.committer, repository.repo_log_encoding)
+    self.comments  = self.class.normalize_comments(self.comments, repository.repo_log_encoding)
+    self.user = repository.find_committer_user(self.committer)
   end
-  
+
   def after_create
     scan_comment_for_issue_ids
   end
+  
+  TIMELOG_RE = /
+    (
+    ((\d+)(h|hours?))((\d+)(m|min)?)?
+    |
+    ((\d+)(h|hours?|m|min))
+    |
+    (\d+):(\d+)
+    |
+    (\d+([\.,]\d+)?)h?
+    )
+    /x
   
   def scan_comment_for_issue_ids
     return if comments.blank?
     # keywords used to reference issues
     ref_keywords = Setting.commit_ref_keywords.downcase.split(",").collect(&:strip)
+    ref_keywords_any = ref_keywords.delete('*')
     # keywords used to fix issues
     fix_keywords = Setting.commit_fix_keywords.downcase.split(",").collect(&:strip)
     
     kw_regexp = (ref_keywords + fix_keywords).collect{|kw| Regexp.escape(kw)}.join("|")
-    return if kw_regexp.blank?
     
     referenced_issues = []
     
-    if ref_keywords.delete('*')
-      # find any issue ID in the comments
-      target_issue_ids = []
-      comments.scan(%r{([\s\(\[,-]|^)#(\d+)(?=[[:punct:]]|\s|<|$)}).each { |m| target_issue_ids << m[1] }
-      referenced_issues += find_referenced_issues_by_id(target_issue_ids)
-    end
-    
-    comments.scan(Regexp.new("(#{kw_regexp})[\s:]+(([\s,;&]*#?\\d+)+)", Regexp::IGNORECASE)).each do |match|
-      action = match[0]
-      target_issue_ids = match[1].scan(/\d+/)
-      target_issues = find_referenced_issues_by_id(target_issue_ids)
-      if fix_keywords.include?(action.downcase) && fix_status = IssueStatus.find_by_id(Setting.commit_fix_status_id)
-        # update status of issues
-        logger.debug "Issues fixed by changeset #{self.revision}: #{issue_ids.join(', ')}." if logger && logger.debug?
-        target_issues.each do |issue|
-          # the issue may have been updated by the closure of another one (eg. duplicate)
-          issue.reload
-          # don't change the status is the issue is closed
-          next if issue.status.is_closed?
-          csettext = "r#{self.revision}"
-          if self.scmid && (! (csettext =~ /^r[0-9]+$/))
-            csettext = "commit:\"#{self.scmid}\""
-          end
-          journal = issue.init_journal(user || User.anonymous, ll(Setting.default_language, :text_status_changed_by_changeset, csettext))
-          issue.status = fix_status
-          unless Setting.commit_fix_done_ratio.blank?
-            issue.done_ratio = Setting.commit_fix_done_ratio.to_i
-          end
-          Redmine::Hook.call_hook(:model_changeset_scan_commit_for_issue_ids_pre_issue_update,
-                                  { :changeset => self, :issue => issue })
-          issue.save
+    comments.scan(/([\s\(\[,-]|^)((#{kw_regexp})[\s:]+)?(#\d+(\s+@#{TIMELOG_RE})?([\s,;&]+#\d+(\s+@#{TIMELOG_RE})?)*)(?=[[:punct:]]|\s|<|$)/i) do |match|
+      action, refs = match[2], match[3]
+      next unless action.present? || ref_keywords_any
+      
+      refs.scan(/#(\d+)(\s+@#{TIMELOG_RE})?/).each do |m|
+        issue, hours = find_referenced_issue_by_id(m[0].to_i), m[2]
+        if issue
+          referenced_issues << issue
+          fix_issue(issue) if fix_keywords.include?(action.to_s.downcase)
+          log_time(issue, hours) if hours && Setting.commit_logtime_enabled?
         end
       end
-      referenced_issues += target_issues
     end
     
     referenced_issues.uniq!
@@ -136,6 +138,14 @@ class Changeset < ActiveRecord::Base
   def long_comments
     @long_comments || split_comments.last
   end
+
+  def text_tag
+    if scmid?
+      "commit:#{scmid}"
+    else
+      "r#{revision}"
+    end
+  end
   
   # Returns the previous changeset
   def previous
@@ -147,11 +157,6 @@ class Changeset < ActiveRecord::Base
     @next ||= Changeset.find(:first, :conditions => ['id > ? AND repository_id = ?', self.id, self.repository_id], :order => 'id ASC')
   end
   
-  # Strips and reencodes a commit log before insertion into the database
-  def self.normalize_comments(str)
-    to_utf8(str.to_s.strip)
-  end
-
   # Creates a new Change from it's common parameters
   def create_change(change)
     Change.create(:changeset => self,
@@ -160,16 +165,67 @@ class Changeset < ActiveRecord::Base
                   :from_path => change[:from_path],
                   :from_revision => change[:from_revision])
   end
-  
+
   private
 
-  # Finds issues that can be referenced by the commit message
-  # i.e. issues that belong to the repository project, a subproject or a parent project
-  def find_referenced_issues_by_id(ids)
-    return [] if ids.compact.empty?
-    Issue.find_all_by_id(ids, :include => :project).select {|issue|
-      project == issue.project || project.is_ancestor_of?(issue.project) || project.is_descendant_of?(issue.project)
-    }
+  # Finds an issue that can be referenced by the commit message
+  # i.e. an issue that belong to the repository project, a subproject or a parent project
+  def find_referenced_issue_by_id(id)
+    return nil if id.blank?
+    issue = Issue.find_by_id(id.to_i, :include => :project)
+    if issue
+      unless project == issue.project || project.is_ancestor_of?(issue.project) || project.is_descendant_of?(issue.project)
+        issue = nil
+      end
+    end
+    issue
+  end
+  
+  def fix_issue(issue)
+    status = IssueStatus.find_by_id(Setting.commit_fix_status_id.to_i)
+    if status.nil?
+      logger.warn("No status macthes commit_fix_status_id setting (#{Setting.commit_fix_status_id})") if logger
+      return issue
+    end
+    
+    # the issue may have been updated by the closure of another one (eg. duplicate)
+    issue.reload
+    # don't change the status is the issue is closed
+    return if issue.status && issue.status.is_closed?
+    
+    journal = issue.init_journal(user || User.anonymous, ll(Setting.default_language, :text_status_changed_by_changeset, text_tag))
+    issue.status = status
+    unless Setting.commit_fix_done_ratio.blank?
+      issue.done_ratio = Setting.commit_fix_done_ratio.to_i
+    end
+    Redmine::Hook.call_hook(:model_changeset_scan_commit_for_issue_ids_pre_issue_update,
+                            { :changeset => self, :issue => issue })
+    unless issue.save
+      logger.warn("Issue ##{issue.id} could not be saved by changeset #{id}: #{issue.errors.full_messages}") if logger
+    end
+    issue
+  end
+  
+  def log_time(issue, hours)
+    time_entry = TimeEntry.new(
+      :user => user,
+      :hours => hours,
+      :issue => issue,
+      :spent_on => commit_date,
+      :comments => l(:text_time_logged_by_changeset, :value => text_tag, :locale => Setting.default_language)
+      )
+    time_entry.activity = log_time_activity unless log_time_activity.nil?
+    
+    unless time_entry.save
+      logger.warn("TimeEntry could not be created by changeset #{id}: #{time_entry.errors.full_messages}") if logger
+    end
+    time_entry
+  end
+  
+  def log_time_activity
+    if Setting.commit_logtime_activity_id.to_i > 0
+      TimeEntryActivity.find_by_id(Setting.commit_logtime_activity_id.to_i)
+    end
   end
   
   def split_comments
@@ -179,9 +235,17 @@ class Changeset < ActiveRecord::Base
     return @short_comments, @long_comments
   end
 
-  def self.to_utf8(str)
-    return str if /\A[\r\n\t\x20-\x7e]*\Z/n.match(str) # for us-ascii
-    encoding = Setting.commit_logs_encoding.to_s.strip
+  public
+
+  # Strips and reencodes a commit log before insertion into the database
+  def self.normalize_comments(str, encoding)
+    Changeset.to_utf8(str.to_s.strip, encoding)
+  end
+
+  private
+
+  def self.to_utf8(str, encoding)
+    return str if str.blank?
     unless encoding.blank? || encoding == 'UTF-8'
       begin
         str = Iconv.conv('UTF-8', encoding, str)
@@ -189,12 +253,20 @@ class Changeset < ActiveRecord::Base
         # do nothing here
       end
     end
-    # removes invalid UTF8 sequences
-    begin
-      Iconv.conv('UTF-8//IGNORE', 'UTF-8', str + '  ')[0..-3]
-    rescue Iconv::InvalidEncoding
-      # "UTF-8//IGNORE" is not supported on some OS
-      str
+    if str.respond_to?(:force_encoding)
+      str.force_encoding('UTF-8')
+      if ! str.valid_encoding?
+        str = str.encode("US-ASCII", :invalid => :replace,
+              :undef => :replace, :replace => '?').encode("UTF-8")
+      end
+    else
+      # removes invalid UTF8 sequences
+      begin
+        str = Iconv.conv('UTF-8//IGNORE', 'UTF-8', str + '  ')[0..-3]
+      rescue Iconv::InvalidEncoding
+        # "UTF-8//IGNORE" is not supported on some OS
+      end
     end
+    str
   end
 end

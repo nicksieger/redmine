@@ -1,5 +1,5 @@
-# redMine - project management software
-# Copyright (C) 2006-2007  Jean-Philippe Lang
+# Redmine - project management software
+# Copyright (C) 2006-2011  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -15,7 +15,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-require File.dirname(__FILE__) + '/../test_helper'
+require File.expand_path('../../test_helper', __FILE__)
 
 class WikiPageTest < ActiveSupport::TestCase
   fixtures :projects, :wikis, :wiki_pages, :wiki_contents, :wiki_content_versions
@@ -120,5 +120,12 @@ class WikiPageTest < ActiveSupport::TestCase
     children.each do |child|
       assert_nil child.parent_id
     end
+  end
+  
+  def test_updated_on_eager_load
+    page = WikiPage.with_updated_on.first
+    assert page.is_a?(WikiPage)
+    assert_not_nil page.read_attribute(:updated_on)
+    assert_equal page.content.updated_on, page.updated_on
   end
 end

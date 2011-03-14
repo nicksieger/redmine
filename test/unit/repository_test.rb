@@ -15,18 +15,23 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-require File.dirname(__FILE__) + '/../test_helper'
+require File.expand_path('../../test_helper', __FILE__)
 
 class RepositoryTest < ActiveSupport::TestCase
   fixtures :projects,
            :trackers,
            :projects_trackers,
+           :enabled_modules,
            :repositories,
            :issues,
            :issue_statuses,
+           :issue_categories,
            :changesets,
            :changes,
            :users,
+           :members,
+           :member_roles,
+           :roles,
            :enumerations
   
   def setup
@@ -57,16 +62,16 @@ class RepositoryTest < ActiveSupport::TestCase
   
   def test_should_not_create_with_disabled_scm
     # disable Subversion
-    Setting.enabled_scm = ['Darcs', 'Git']
-    repository = Repository::Subversion.new(:project => Project.find(3), :url => "svn://localhost")
-    assert !repository.save
-    assert_equal I18n.translate('activerecord.errors.messages.invalid'), repository.errors.on(:type)
-    # re-enable Subversion for following tests
-    Setting.delete_all
+    with_settings :enabled_scm => ['Darcs', 'Git'] do
+      repository = Repository::Subversion.new(:project => Project.find(3), :url => "svn://localhost")
+      assert !repository.save
+      assert_equal I18n.translate('activerecord.errors.messages.invalid'), repository.errors.on(:type)
+    end
   end
   
   def test_scan_changesets_for_issue_ids
     Setting.default_language = 'en'
+    Setting.notified_events = ['issue_added','issue_updated']
     
     # choosing a status to apply to fix issues
     Setting.commit_fix_status_id = IssueStatus.find(:first, :conditions => ["is_closed = ?", true]).id
@@ -120,16 +125,19 @@ class RepositoryTest < ActiveSupport::TestCase
     assert_not_equal( comment, changeset.comments )
     assert_equal( 'This is a loooooooooooooooooooooooooooong comment', changeset.comments )
   end
-  
+
   def test_for_urls_strip
-    repository = Repository::Cvs.create(:project => Project.find(4), :url => ' :pserver:login:password@host:/path/to/the/repository',
-                                                                     :root_url => 'foo  ')
+    repository = Repository::Cvs.create(
+        :project => Project.find(4),
+        :url => ' :pserver:login:password@host:/path/to/the/repository',
+        :root_url => 'foo  ',
+        :log_encoding => 'UTF-8')
     assert repository.save
     repository.reload
     assert_equal ':pserver:login:password@host:/path/to/the/repository', repository.url
     assert_equal 'foo', repository.root_url
   end
-  
+
   def test_manual_user_mapping
     assert_no_difference "Changeset.count(:conditions => 'user_id <> 2')" do
       c = Changeset.create!(:repository => @repository, :committer => 'foo', :committed_on => Time.now, :revision => 100, :comments => 'Committed by foo.')

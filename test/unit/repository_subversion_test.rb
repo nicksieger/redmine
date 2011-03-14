@@ -15,14 +15,15 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-require File.dirname(__FILE__) + '/../test_helper'
+require File.expand_path('../../test_helper', __FILE__)
 
 class RepositorySubversionTest < ActiveSupport::TestCase
-  fixtures :projects, :repositories
+  fixtures :projects, :repositories, :enabled_modules, :users, :roles 
   
   def setup
-    @project = Project.find(1)
-    assert @repository = Repository::Subversion.create(:project => @project, :url => "file:///#{self.class.repository_path('subversion')}")
+    @project = Project.find(3)
+    assert @repository = Repository::Subversion.create(:project => @project,
+             :url => "file://#{self.class.repository_path('subversion')}")
   end
   
   if repository_configured?('subversion')
@@ -74,7 +75,7 @@ class RepositorySubversionTest < ActiveSupport::TestCase
     end
 
     def test_directory_listing_with_square_brackets_in_base
-      @project = Project.find(1)
+      @project = Project.find(3)
       @repository = Repository::Subversion.create(:project => @project, :url => "file:///#{self.class.repository_path('subversion')}/subversion_test/[folder_with_brackets]")
 
       @repository.fetch_changesets
@@ -87,6 +88,104 @@ class RepositorySubversionTest < ActiveSupport::TestCase
       assert_not_nil entries, 'Expect to find entries'
       assert_equal 1, entries.size, 'Expect a single entry'
       assert_equal 'README.txt', entries.first.name
+    end
+
+    def test_identifier
+      @repository.fetch_changesets
+      @repository.reload
+      c = @repository.changesets.find_by_revision('1')
+      assert_equal c.revision, c.identifier
+    end
+
+    def test_find_changeset_by_empty_name
+      @repository.fetch_changesets
+      @repository.reload
+      ['', ' ', nil].each do |r|
+        assert_nil @repository.find_changeset_by_name(r)
+      end
+    end
+
+    def test_identifier_nine_digit
+      c = Changeset.new(:repository => @repository, :committed_on => Time.now,
+                        :revision => '123456789', :comments => 'test')
+      assert_equal c.identifier, c.revision
+    end
+
+    def test_format_identifier
+      @repository.fetch_changesets
+      @repository.reload
+      c = @repository.changesets.find_by_revision('1')
+      assert_equal c.format_identifier, c.revision
+    end
+
+    def test_format_identifier_nine_digit
+      c = Changeset.new(:repository => @repository, :committed_on => Time.now,
+                        :revision => '123456789', :comments => 'test')
+      assert_equal c.format_identifier, c.revision
+    end
+
+    def test_activities
+      c = Changeset.new(:repository => @repository, :committed_on => Time.now,
+                        :revision => '1', :comments => 'test')
+      assert c.event_title.include?('1:')
+      assert_equal '1', c.event_url[:rev]
+    end
+
+    def test_activities_nine_digit
+      c = Changeset.new(:repository => @repository, :committed_on => Time.now,
+                        :revision => '123456789', :comments => 'test')
+      assert c.event_title.include?('123456789:')
+      assert_equal '123456789', c.event_url[:rev]
+    end
+
+    def test_log_encoding_ignore_setting
+      with_settings :commit_logs_encoding => 'windows-1252' do
+        s1 = "\xC2\x80"
+        s2 = "\xc3\x82\xc2\x80"
+        if s1.respond_to?(:force_encoding)
+          s3 = s1
+          s4 = s2
+          s1.force_encoding('ASCII-8BIT')
+          s2.force_encoding('ASCII-8BIT')
+          s3.force_encoding('ISO-8859-1')
+          s4.force_encoding('UTF-8')
+          assert_equal s3.encode('UTF-8'), s4
+        end
+        c = Changeset.new(:repository => @repository,
+                          :comments=>s2,
+                          :revision=>'123',
+                          :committed_on => Time.now)
+        assert c.save
+        assert_equal s2, c.comments
+      end
+    end
+
+    def test_previous
+      @repository.fetch_changesets
+      @repository.reload
+      changeset = @repository.find_changeset_by_name('3')
+      assert_equal @repository.find_changeset_by_name('2'), changeset.previous
+    end
+
+    def test_previous_nil
+      @repository.fetch_changesets
+      @repository.reload
+      changeset = @repository.find_changeset_by_name('1')
+      assert_nil changeset.previous
+    end
+
+    def test_next
+      @repository.fetch_changesets
+      @repository.reload
+      changeset = @repository.find_changeset_by_name('2')
+      assert_equal @repository.find_changeset_by_name('3'), changeset.next
+    end
+
+    def test_next_nil
+      @repository.fetch_changesets
+      @repository.reload
+      changeset = @repository.find_changeset_by_name('11')
+      assert_nil changeset.next
     end
   else
     puts "Subversion test repository NOT FOUND. Skipping unit tests !!!"

@@ -1,5 +1,5 @@
-# redMine - project management software
-# Copyright (C) 2006  Jean-Philippe Lang
+# Redmine - project management software
+# Copyright (C) 2006-2011  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -28,15 +28,26 @@ module IssuesHelper
       ancestors << issue unless issue.leaf?
     end
   end
-  
+
+  # Renders a HTML/CSS tooltip
+  #
+  # To use, a trigger div is needed.  This is a div with the class of "tooltip"
+  # that contains this method wrapped in a span with the class of "tip"
+  #
+  #    <div class="tooltip"><%= link_to_issue(issue) %>
+  #      <span class="tip"><%= render_issue_tooltip(issue) %></span>
+  #    </div>
+  #
   def render_issue_tooltip(issue)
     @cached_label_status ||= l(:field_status)
     @cached_label_start_date ||= l(:field_start_date)
     @cached_label_due_date ||= l(:field_due_date)
     @cached_label_assigned_to ||= l(:field_assigned_to)
     @cached_label_priority ||= l(:field_priority)
-    
+    @cached_label_project ||= l(:field_project)
+
     link_to_issue(issue) + "<br /><br />" +
+      "<strong>#{@cached_label_project}</strong>: #{link_to_project(issue.project)}<br />" +
       "<strong>#{@cached_label_status}</strong>: #{issue.status.name}<br />" +
       "<strong>#{@cached_label_start_date}</strong>: #{format_date(issue.start_date)}<br />" +
       "<strong>#{@cached_label_due_date}</strong>: #{format_date(issue.due_date)}<br />" +
@@ -95,11 +106,30 @@ module IssuesHelper
       # Project specific queries and global queries
       visible << (@project.nil? ? ["project_id IS NULL"] : ["project_id IS NULL OR project_id = ?", @project.id])
       @sidebar_queries = Query.find(:all, 
-                                    :select => 'id, name',
+                                    :select => 'id, name, is_public',
                                     :order => "name ASC",
                                     :conditions => visible.conditions)
     end
     @sidebar_queries
+  end
+
+  def query_links(title, queries)
+    # links to #index on issues/show
+    url_params = controller_name == 'issues' ? {:controller => 'issues', :action => 'index', :project_id => @project} : params
+  
+    content_tag('h3', title) +
+      queries.collect {|query|
+          link_to(h(query.name), url_params.merge(:query_id => query))
+        }.join('<br />')
+  end
+  
+  def render_sidebar_queries
+    out = ''
+    queries = sidebar_queries.select {|q| !q.is_public?}
+    out << query_links(l(:label_my_queries), queries) if queries.any?
+    queries = sidebar_queries.select {|q| q.is_public?}
+    out << query_links(l(:label_query_plural), queries) if queries.any?
+    out
   end
 
   def show_detail(detail, no_html=false)
@@ -153,7 +183,16 @@ module IssuesHelper
       end
     end
     
-    if !detail.value.blank?
+    if detail.property == 'attr' && detail.prop_key == 'description'
+      s = l(:text_journal_changed_no_detail, :label => label)
+      unless no_html
+        diff_link = link_to 'diff', 
+          {:controller => 'journals', :action => 'diff', :id => detail.journal_id, :detail_id => detail.id},
+          :title => l(:label_view_diff)
+        s << " (#{ diff_link })"
+      end
+      s
+    elsif !detail.value.blank?
       case detail.property
       when 'attr', 'cf'
         if !detail.old_value.blank?
@@ -175,6 +214,20 @@ module IssuesHelper
     if association
       record = association.class_name.constantize.find_by_id(id)
       return record.name if record
+    end
+  end
+  
+  # Renders issue children recursively
+  def render_api_issue_children(issue, api)
+    return if issue.leaf?
+    api.array :children do
+      issue.children.each do |child|
+        api.issue(:id => child.id) do
+          api.tracker(:id => child.tracker_id, :name => child.tracker.name) unless child.tracker.nil?
+          api.subject child.subject
+          render_api_issue_children(child, api)
+        end
+      end
     end
   end
   
@@ -234,31 +287,5 @@ module IssuesHelper
       end
     end
     export
-  end
-
-  def gantt_zoom_link(gantt, in_or_out)
-    img_attributes = {:style => 'height:1.4em; width:1.4em; margin-left: 3px;'} # em for accessibility
-
-    case in_or_out
-    when :in
-      if gantt.zoom < 4
-        link_to_remote(l(:text_zoom_in) + image_tag('zoom_in.png', img_attributes.merge(:alt => l(:text_zoom_in))),
-                       {:url => gantt.params.merge(:zoom => (gantt.zoom+1)), :update => 'content'},
-                       {:href => url_for(gantt.params.merge(:zoom => (gantt.zoom+1)))})
-      else
-        l(:text_zoom_in) +
-          image_tag('zoom_in_g.png', img_attributes.merge(:alt => l(:text_zoom_in)))
-      end
-      
-    when :out
-      if gantt.zoom > 1
-        link_to_remote(l(:text_zoom_out) + image_tag('zoom_out.png', img_attributes.merge(:alt => l(:text_zoom_out))),
-                       {:url => gantt.params.merge(:zoom => (gantt.zoom-1)), :update => 'content'},
-                       {:href => url_for(gantt.params.merge(:zoom => (gantt.zoom-1)))})
-      else
-        l(:text_zoom_out) +
-          image_tag('zoom_out_g.png', img_attributes.merge(:alt => l(:text_zoom_out)))
-      end
-    end
   end
 end

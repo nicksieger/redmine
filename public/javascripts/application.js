@@ -17,6 +17,13 @@ function toggleCheckboxesBySelector(selector) {
 	for (i = 0; i < boxes.length; i++) { boxes[i].checked = !all_checked; }
 }
 
+function setCheckboxesBySelector(checked, selector) {
+  var boxes = $$(selector);
+  boxes.each(function(ele) {
+    ele.checked = checked;
+  });
+}
+
 function showAndScrollTo(id, focus) {
 	Element.show(id);
 	if (focus!=null) { Form.Element.focus(focus); }
@@ -39,6 +46,12 @@ function toggleFieldset(el) {
 	Effect.toggle(fieldset.down('div'), 'slide', {duration:0.2});
 }
 
+function hideFieldset(el) {
+	var fieldset = Element.up(el, 'fieldset');
+	fieldset.toggleClassName('collapsed');
+	fieldset.down('div').hide();
+}
+
 var fileFieldCount = 1;
 
 function addFileField() {
@@ -56,7 +69,6 @@ function addFileField() {
     dLabel.addClassName('inline');
     // Pulls the languge value used for Optional Description
     dLabel.update($('attachment_description_label_content').innerHTML)
-    
     p = document.getElementById("attachments_fields");
     p.appendChild(document.createElement("br"));
     p.appendChild(f);
@@ -211,6 +223,81 @@ function observeParentIssueField(url) {
                              document.getElementById('issue_parent_issue_id').value = value.id;
                            }});
 }
+
+function observeRelatedIssueField(url) {
+  new Ajax.Autocompleter('relation_issue_to_id',
+                         'related_issue_candidates',
+                         url,
+                         { minChars: 3,
+                           frequency: 0.5,
+                           paramName: 'q',
+                           updateElement: function(value) {
+                             document.getElementById('relation_issue_to_id').value = value.id;
+                           },
+                           parameters: 'scope=all'
+                           });
+}
+
+function setVisible(id, visible) {
+  var el = $(id);
+  if (el) {if (visible) {el.show();} else {el.hide();}}
+}
+
+function observeProjectModules() {
+  var f = function() {
+    /* Hides trackers and issues custom fields on the new project form when issue_tracking module is disabled */
+    var c = ($('project_enabled_module_names_issue_tracking').checked == true);
+    setVisible('project_trackers', c);
+    setVisible('project_issue_custom_fields', c);
+  };
+  
+  Event.observe(window, 'load', f);
+  Event.observe('project_enabled_module_names_issue_tracking', 'change', f);
+}
+
+/*
+ * Class used to warn user when leaving a page with unsaved textarea
+ * Author: mathias.fischer@berlinonline.de
+*/
+
+var WarnLeavingUnsaved = Class.create({
+	observedForms: false,
+	observedElements: false,
+	changedForms: false,
+	message: null,
+	
+	initialize: function(message){
+		this.observedForms = $$('form');
+		this.observedElements =  $$('textarea');
+		this.message = message;
+		
+		this.observedElements.each(this.observeChange.bind(this));
+		this.observedForms.each(this.submitAction.bind(this));
+		
+		window.onbeforeunload = this.unload.bind(this);
+	},
+	
+	unload: function(){
+		if(this.changedForms)
+      return this.message;
+	},
+	
+	setChanged: function(){
+    this.changedForms = true;
+	},
+	
+	setUnchanged: function(){
+    this.changedForms = false;
+	},
+	
+	observeChange: function(element){
+    element.observe('change',this.setChanged.bindAsEventListener(this));
+	},
+	
+	submitAction: function(element){
+    element.observe('submit',this.setUnchanged.bindAsEventListener(this));
+	}
+});
 
 /* shows and hides ajax indicator */
 Ajax.Responders.register({

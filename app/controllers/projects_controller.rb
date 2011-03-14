@@ -20,18 +20,18 @@ class ProjectsController < ApplicationController
   menu_item :roadmap, :only => :roadmap
   menu_item :settings, :only => :settings
   
-  before_filter :find_project, :except => [ :index, :list, :add, :copy ]
-  before_filter :authorize, :except => [ :index, :list, :add, :copy, :archive, :unarchive, :destroy]
-  before_filter :authorize_global, :only => :add
+  before_filter :find_project, :except => [ :index, :list, :new, :create, :copy ]
+  before_filter :authorize, :except => [ :index, :list, :new, :create, :copy, :archive, :unarchive, :destroy]
+  before_filter :authorize_global, :only => [:new, :create]
   before_filter :require_admin, :only => [ :copy, :archive, :unarchive, :destroy ]
-  accept_key_auth :index
-  
-  after_filter :only => [:add, :edit, :archive, :unarchive, :destroy] do |controller|
+  accept_key_auth :index, :show, :create, :update, :destroy
+
+  after_filter :only => [:create, :edit, :update, :archive, :unarchive, :destroy] do |controller|
     if controller.request.post?
       controller.send :expire_action, :controller => 'welcome', :action => 'robots.txt'
     end
   end
-  
+
   helper :sort
   include SortHelper
   helper :custom_fields
@@ -49,8 +49,10 @@ class ProjectsController < ApplicationController
       format.html { 
         @projects = Project.visible.find(:all, :order => 'lft') 
       }
-      format.xml  {
-        @projects = Project.visible.find(:all, :order => 'lft')
+      format.api  {
+        @offset, @limit = api_offset_and_limit
+        @project_count = Project.visible.count
+        @projects = Project.visible.all(:offset => @offset, :limit => @limit, :order => 'lft')
       }
       format.atom {
         projects = Project.visible.find(:all, :order => 'created_on DESC',
@@ -60,40 +62,41 @@ class ProjectsController < ApplicationController
     end
   end
   
-  # Add a new project
-  def add
+  def new
     @issue_custom_fields = IssueCustomField.find(:all, :order => "#{CustomField.table_name}.position")
     @trackers = Tracker.all
     @project = Project.new(params[:project])
-    if request.get?
-      @project.identifier = Project.next_identifier if Setting.sequential_project_identifiers?
-      @project.trackers = Tracker.all
-      @project.is_public = Setting.default_projects_public?
-      @project.enabled_module_names = Setting.default_projects_modules
-    else
-      @project.enabled_module_names = params[:enabled_modules]
-      if validate_parent_id && @project.save
-        @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
-        # Add current user as a project member if he is not admin
-        unless User.current.admin?
-          r = Role.givable.find_by_id(Setting.new_project_user_role_id.to_i) || Role.givable.first
-          m = Member.new(:user => User.current, :roles => [r])
-          @project.members << m
-        end
-        respond_to do |format|
-          format.html { 
-            flash[:notice] = l(:notice_successful_create)
-            redirect_to :controller => 'projects', :action => 'settings', :id => @project
-          }
-          format.xml  { head :created, :location => url_for(:controller => 'projects', :action => 'show', :id => @project.id) }
-        end
-      else
-        respond_to do |format|
-          format.html
-          format.xml  { render :xml => @project.errors, :status => :unprocessable_entity }
-        end
+  end
+
+  verify :method => :post, :only => :create, :render => {:nothing => true, :status => :method_not_allowed }
+  def create
+    @issue_custom_fields = IssueCustomField.find(:all, :order => "#{CustomField.table_name}.position")
+    @trackers = Tracker.all
+    @project = Project.new
+    @project.safe_attributes = params[:project]
+
+    if validate_parent_id && @project.save
+      @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
+      # Add current user as a project member if he is not admin
+      unless User.current.admin?
+        r = Role.givable.find_by_id(Setting.new_project_user_role_id.to_i) || Role.givable.first
+        m = Member.new(:user => User.current, :roles => [r])
+        @project.members << m
       end
-    end	
+      respond_to do |format|
+        format.html { 
+          flash[:notice] = l(:notice_successful_create)
+          redirect_to :controller => 'projects', :action => 'settings', :id => @project
+        }
+        format.api  { render :action => 'show', :status => :created, :location => url_for(:controller => 'projects', :action => 'show', :id => @project.id) }
+      end
+    else
+      respond_to do |format|
+        format.html { render :action => 'new' }
+        format.api  { render_validation_errors(@project) }
+      end
+    end
+    
   end
   
   def copy
@@ -112,18 +115,19 @@ class ProjectsController < ApplicationController
       end  
     else
       Mailer.with_deliveries(params[:notifications] == '1') do
-        @project = Project.new(params[:project])
+        @project = Project.new
+        @project.safe_attributes = params[:project]
         @project.enabled_module_names = params[:enabled_modules]
         if validate_parent_id && @project.copy(@source_project, :only => params[:only])
           @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
           flash[:notice] = l(:notice_successful_create)
-          redirect_to :controller => 'admin', :action => 'projects'
+          redirect_to :controller => 'projects', :action => 'settings', :id => @project
         elsif !@project.new_record?
           # Project was created
           # But some objects were not copied due to validation failures
           # (eg. issues from disabled trackers)
           # TODO: inform about that
-          redirect_to :controller => 'admin', :action => 'projects'
+          redirect_to :controller => 'projects', :action => 'settings', :id => @project
         end
       end
     end
@@ -161,7 +165,7 @@ class ProjectsController < ApplicationController
     
     respond_to do |format|
       format.html
-      format.xml
+      format.api
     end
   end
 
@@ -174,34 +178,36 @@ class ProjectsController < ApplicationController
     @wiki ||= @project.wiki
   end
   
-  # Edit @project
   def edit
-    if request.get?
+  end
+
+  # TODO: convert to PUT only
+  verify :method => [:post, :put], :only => :update, :render => {:nothing => true, :status => :method_not_allowed }
+  def update
+    @project.safe_attributes = params[:project]
+    if validate_parent_id && @project.save
+      @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
+      respond_to do |format|
+        format.html { 
+          flash[:notice] = l(:notice_successful_update)
+          redirect_to :action => 'settings', :id => @project
+        }
+        format.api  { head :ok }
+      end
     else
-      @project.attributes = params[:project]
-      if validate_parent_id && @project.save
-        @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
-        respond_to do |format|
-          format.html { 
-            flash[:notice] = l(:notice_successful_update)
-            redirect_to :action => 'settings', :id => @project
-          }
-          format.xml  { head :ok }
-        end
-      else
-        respond_to do |format|
-          format.html { 
-            settings
-            render :action => 'settings'
-          }
-          format.xml  { render :xml => @project.errors, :status => :unprocessable_entity }
-        end
+      respond_to do |format|
+        format.html { 
+          settings
+          render :action => 'settings'
+        }
+        format.api  { render_validation_errors(@project) }
       end
     end
   end
-  
+
+  verify :method => :post, :only => :modules, :render => {:nothing => true, :status => :method_not_allowed }
   def modules
-    @project.enabled_module_names = params[:enabled_modules]
+    @project.enabled_module_names = params[:enabled_module_names]
     flash[:notice] = l(:notice_successful_update)
     redirect_to :action => 'settings', :id => @project, :tab => 'modules'
   end
@@ -226,11 +232,11 @@ class ProjectsController < ApplicationController
     if request.get?
       # display confirmation view
     else
-      if params[:format] == 'xml' || params[:confirm]
+      if api_request? || params[:confirm]
         @project_to_destroy.destroy
         respond_to do |format|
           format.html { redirect_to :controller => 'admin', :action => 'projects' }
-          format.xml  { head :ok }
+          format.api  { head :ok }
         end
       end
     end
@@ -238,27 +244,6 @@ class ProjectsController < ApplicationController
     @project = nil
   end
 
-  def save_activities
-    if request.post? && params[:enumerations]
-      Project.transaction do
-        params[:enumerations].each do |id, activity|
-          @project.update_or_create_time_entry_activity(id, activity)
-        end
-      end
-      flash[:notice] = l(:notice_successful_update)
-    end
-    
-    redirect_to :controller => 'projects', :action => 'settings', :tab => 'activities', :id => @project
-  end
-
-  def reset_activities
-    @project.time_entry_activities.each do |time_entry_activity|
-      time_entry_activity.destroy(time_entry_activity.parent)
-    end
-    flash[:notice] = l(:notice_successful_update)
-    redirect_to :controller => 'projects', :action => 'settings', :tab => 'activities', :id => @project
-  end
-  
 private
   def find_optional_project
     return true unless params[:id]

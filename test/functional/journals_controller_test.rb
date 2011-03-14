@@ -1,5 +1,5 @@
-# redMine - project management software
-# Copyright (C) 2006-2008  Jean-Philippe Lang
+# Redmine - project management software
+# Copyright (C) 2006-2011  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -15,14 +15,15 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-require File.dirname(__FILE__) + '/../test_helper'
+require File.expand_path('../../test_helper', __FILE__)
 require 'journals_controller'
 
 # Re-raise errors caught by the controller.
 class JournalsController; def rescue_action(e) raise e end; end
 
 class JournalsControllerTest < ActionController::TestCase
-  fixtures :projects, :users, :members, :member_roles, :roles, :issues, :journals, :journal_details, :enabled_modules
+  fixtures :projects, :users, :members, :member_roles, :roles, :issues, :journals, :journal_details, :enabled_modules,
+    :trackers, :issue_statuses, :enumerations, :custom_fields, :custom_values, :custom_fields_projects
   
   def setup
     @controller = JournalsController.new
@@ -38,16 +39,35 @@ class JournalsControllerTest < ActionController::TestCase
     assert_equal 'application/atom+xml', @response.content_type
   end
   
+  def test_diff
+    get :diff, :id => 3, :detail_id => 4
+    assert_response :success
+    assert_template 'diff'
+    
+    assert_tag 'span',
+      :attributes => {:class => 'diff_out'},
+      :content => /removed/
+    assert_tag 'span',
+      :attributes => {:class => 'diff_in'},
+      :content => /added/
+  end
+  
   def test_reply_to_issue
     @request.session[:user_id] = 2
-    get :new, :id => 1
+    get :new, :id => 6
     assert_response :success
     assert_select_rjs :show, "update"
+  end
+  
+  def test_reply_to_issue_without_permission
+    @request.session[:user_id] = 7
+    get :new, :id => 6
+    assert_response 403
   end
 
   def test_reply_to_note
     @request.session[:user_id] = 2
-    get :new, :id => 1, :journal_id => 2
+    get :new, :id => 6, :journal_id => 4
     assert_response :success
     assert_select_rjs :show, "update"
   end
