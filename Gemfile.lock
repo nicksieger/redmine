@@ -21,6 +21,7 @@ GEM
     jruby-openssl (0.7.4)
       bouncy-castle-java
     jruby-rack (1.0.9)
+    mysql (2.8.1)
     rack (1.1.2)
     rails (2.3.11)
       actionmailer (= 2.3.11)
@@ -39,6 +40,7 @@ GEM
 
 PLATFORMS
   java
+  ruby
 
 DEPENDENCIES
   activerecord-jdbc-adapter
@@ -47,6 +49,7 @@ DEPENDENCIES
   jdbc-mysql
   jruby-openssl
   jruby-rack (= 1.0.9)
+  mysql
   rails (= 2.3.11)
   rubytree (= 0.5.2)
   trinidad (= 1.2.0)

@@ -6,7 +6,7 @@ gem 'i18n', '0.4.2'
 gem 'rubytree', '0.5.2', :require => 'tree'
 gem 'coderay', '~>0.9.7'
 
-if defined?(JRUBY_VERSION)
+platforms :jruby do
   gem 'jruby-rack', '1.0.9'
   gem 'trinidad_jars', '1.0.1'
   gem 'trinidad', '1.2.0'
@@ -14,6 +14,8 @@ if defined?(JRUBY_VERSION)
   gem 'jruby-openssl'
   gem 'activerecord-jdbc-adapter'
   gem 'jdbc-mysql'
-else
+end
+
+platforms :ruby do
   gem 'mysql'
 end
