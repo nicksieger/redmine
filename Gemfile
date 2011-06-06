@@ -7,9 +7,9 @@ gem 'rubytree', '0.5.2', :require => 'tree'
 gem 'coderay', '~>0.9.7'
 
 if defined?(JRUBY_VERSION)
-  gem 'jruby-rack', '1.0.8'
+  gem 'jruby-rack', '1.0.9'
   gem 'trinidad_jars', '1.0.1'
-  gem 'trinidad', '1.1.0'
+  gem 'trinidad', '1.2.0'
 
   gem 'jruby-openssl'
   gem 'activerecord-jdbc-adapter'
