@@ -1,6 +1,6 @@
 source 'http://rubygems.org'
 
-gem 'rails', '2.3.11'
+gem 'rails', '2.3.12'
 gem 'i18n', '0.4.2'
 
 gem 'rubytree', '0.5.2', :require => 'tree'
