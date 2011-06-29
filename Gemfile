@@ -1,5 +1,6 @@
 source 'http://rubygems.org'
 
+gem 'rdoc'
 gem 'rails', '2.3.12'
 gem 'i18n', '0.4.2'
 
