@@ -59,7 +59,7 @@ Rails::Initializer.run do |config|
     instance_eval File.read(File.join(File.dirname(__FILE__), 'additional_environment.rb'))
   end
 
-  if defined?(JRUBY_VERSION)
+  if false # defined?(JRUBY_VERSION)
     require 'rack_jruby_profiling'
     config.middleware.use Rack::JRubyProfiler
   end
