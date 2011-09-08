@@ -23,5 +23,5 @@ platforms :jruby do
 end
 
 platforms :ruby do
-  gem 'mysql'
+  gem 'mysql2', '~>0.2.0'
 end
