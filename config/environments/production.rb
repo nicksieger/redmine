@@ -28,3 +28,5 @@ config.action_mailer.raise_delivery_errors = false
 
 # No email in production log
 config.action_mailer.logger = nil
+
+config.threadsafe!
