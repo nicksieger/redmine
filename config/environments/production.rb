@@ -30,4 +30,4 @@ config.action_mailer.raise_delivery_errors = false
 config.action_mailer.logger = nil
 
 # NewRelic isn't detecting Trinidad at the moment
-NewRelic::Agent.manual_start if defined?(JRUBY_VERSION)
+::NewRelic::Agent.manual_start if defined?(JRUBY_VERSION)
